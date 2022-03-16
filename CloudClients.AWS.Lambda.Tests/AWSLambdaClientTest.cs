@@ -14,6 +14,7 @@ namespace CloudClients.AWS.Lambda.Tests
         private readonly Mock<IAWSLambdaClientLogger> _mockAWSLambdaClientLogger;
 
         private AWSLambdaClientConfig? _configLocalLambda;
+        private AWSLambdaClientConfig? _configRemoteLambda;
 
         public TestContext? TestContext { get; set; }
 
@@ -32,6 +33,11 @@ namespace CloudClients.AWS.Lambda.Tests
             _debugLogs = new List<string>();
 
             _mockAWSLambdaClientLogger = new Mock<IAWSLambdaClientLogger>();
+            InitializeLoggerMock();
+        }
+
+        private void InitializeLoggerMock()
+        {
             _mockAWSLambdaClientLogger.Setup(m => m.LogInformation(It.IsAny<string>()))
                 .Callback<string>(message =>
                 {
@@ -67,7 +73,6 @@ namespace CloudClients.AWS.Lambda.Tests
             _configLocalLambda = new AWSLambdaClientConfig
             {
                 UseAnonymousCredentials = true,
-                DebugMode = false,
                 AmazonLambdaConfig = new AmazonLambdaConfig
                 {
                     ServiceURL = "http://127.0.0.1:3001"
@@ -75,6 +80,16 @@ namespace CloudClients.AWS.Lambda.Tests
                 InvokeRequestConfig = new InvokeRequestConfig
                 {
                     FunctionName = "HelloFromLambdaFunction",
+                    InvocationType = InvocationType.RequestResponse,
+                    ExpectedStatusCode = 200
+                }
+            };
+
+            _configRemoteLambda = new AWSLambdaClientConfig
+            {
+                InvokeRequestConfig = new InvokeRequestConfig
+                {
+                    FunctionName = "demo-stand-alone-lambda",
                     InvocationType = InvocationType.RequestResponse,
                     ExpectedStatusCode = 200
                 }
@@ -98,7 +113,7 @@ namespace CloudClients.AWS.Lambda.Tests
             Assert.IsNotNull(_configLocalLambda);
             _configLocalLambda.InvokeRequestConfig = null;
 
-            var action = () => CreateAWSLambdaClient();
+            var action = () => CreateLocalAWSLambdaClient();
 
             var exceptionAssertions = action.Should().Throw<ArgumentNullException>();
             exceptionAssertions.WithMessage("Value cannot be null. (Parameter 'InvokeRequestConfig')");
@@ -107,16 +122,37 @@ namespace CloudClients.AWS.Lambda.Tests
         [TestMethod]
         public async Task InvokeRequestResponse_Given_request_Should_return_a_response()
         {
-            using var target = CreateAWSLambdaClient();
+            using var target = CreateLocalAWSLambdaClient();
 
             var actual = await target.InvokeAsync<string, string>("abcde");
             Assert.AreEqual("ABCDE", actual);
         }
 
         [TestMethod]
+        public async Task InvokeRequestResponse_Remote_Given_request_Should_return_a_response()
+        {
+            using var target = CreateRemoteAWSLambdaClient();
+
+            var actual = await target.InvokeAsync<string, string>("abcde");
+            Assert.AreEqual("ABCDE", actual);
+        }
+
+        [TestMethod]
+        public async Task InvokeRequestResponse_Remote_Event_Given_request_Should_return_a_response()
+        {
+            Assert.IsNotNull(_configRemoteLambda);
+            _configRemoteLambda.InvokeRequestConfig.InvocationType = InvocationType.Event;
+            _configRemoteLambda.InvokeRequestConfig.ExpectedStatusCode = 202;
+            using var target = CreateRemoteAWSLambdaClient();
+
+            var actual = await target.InvokeAsync<string, string>("abcde");
+            Assert.IsNull(actual);
+        }
+
+        [TestMethod]
         public async Task InvokeRequestResponse_Given_request_Should_log_response()
         {
-            using var target = CreateAWSLambdaClient();
+            using var target = CreateLocalAWSLambdaClient();
 
             await target.InvokeAsync<string, string>("abcde");
 
@@ -132,7 +168,7 @@ namespace CloudClients.AWS.Lambda.Tests
         {
             Assert.IsNotNull(_configLocalLambda);
             _configLocalLambda.DebugMode = true;
-            using var target = CreateAWSLambdaClient();
+            using var target = CreateLocalAWSLambdaClient();
 
             await target.InvokeAsync<string, string>("abcde");
 
@@ -151,7 +187,7 @@ namespace CloudClients.AWS.Lambda.Tests
         {
             Assert.IsNotNull(_configLocalLambda);
             _configLocalLambda.InvokeRequestConfig.ExpectedStatusCode = 100;
-            using var target = CreateAWSLambdaClient();
+            using var target = CreateLocalAWSLambdaClient();
 
             await target.InvokeAsync<string, string>("abcde");
 
@@ -163,9 +199,14 @@ namespace CloudClients.AWS.Lambda.Tests
             Assert.AreEqual(0, _debugLogs.Count);
         }
 
-        private AWSLambdaClient CreateAWSLambdaClient()
+        private AWSLambdaClient CreateLocalAWSLambdaClient()
         {
             return new AWSLambdaClient(_configLocalLambda, _mockAWSLambdaClientLogger.Object);
+        }
+
+        private AWSLambdaClient CreateRemoteAWSLambdaClient()
+        {
+            return new AWSLambdaClient(_configRemoteLambda, _mockAWSLambdaClientLogger.Object);
         }
 
         private void Print(string message)
